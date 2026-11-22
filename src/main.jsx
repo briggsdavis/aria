@@ -113,7 +113,7 @@ async function extractClip(url, start, end) {
   }
   if (!response.ok || !response.headers.get('Content-Type')?.startsWith('audio/mpeg')) {
     const result = await response.json().catch(() => null)
-    if (!isLocalPage && result?.code === 'MISSING_DEPENDENCIES') throw new LocalAudioSetupError(result.error)
+    if (!isLocalPage && result?.code === 'MISSING_DEPENDENCIES') throw new LocalAudioSetupError(result.error, { cause: 'tools' })
     if (response.status === 404 && !result?.error) {
       throw new Error('The local audio route was not found. Restart Atropos and try again.')
     }
@@ -206,6 +206,11 @@ function App() {
     setAudioStatus(await checkLocalAudio())
   }
 
+  function toggleAudioSetup() {
+    if (showAudioSetup) setShowAudioSetup(false)
+    else openAudioSetup()
+  }
+
   async function createSplice(event) {
     event.preventDefault(); setError(''); setNotice('')
     if (busy) return
@@ -214,9 +219,10 @@ function App() {
     if (!spliceTitle.trim()) return setError('Give this splice a name.')
     if (!Number.isFinite(a) || !Number.isFinite(b)) return setError('Use MM:SS or HH:MM:SS for both times.')
     if (a < 0 || b <= a) return setError('End time must be after start time.')
-    setBusy('splice')
+    const needsAudioCheck = !isLocalPage && !selected.audioUrl && audioStatus !== 'ready'
+    setBusy(needsAudioCheck ? 'check-audio' : 'splice')
     try {
-      if (!isLocalPage && !selected.audioUrl && audioStatus !== 'ready') {
+      if (needsAudioCheck) {
         setWaitingForHelper(false)
         const status = await checkLocalAudio()
         setAudioStatus(status)
@@ -224,6 +230,7 @@ function App() {
           setShowAudioSetup(true)
           return
         }
+        setBusy('splice')
       }
       const audio = selected.audioUrl
         ? await makeMp3(await audioForSource(selected), a, b)
@@ -233,7 +240,7 @@ function App() {
       setSpliceTitle(''); setNotice('MP3 splice created and saved to your library.')
     } catch (e) {
       if (e instanceof LocalAudioSetupError) {
-        setAudioStatus(await checkLocalAudio())
+        setAudioStatus(e.cause === 'tools' ? 'tools' : 'unreachable')
         setShowAudioSetup(true)
       }
       setError(e.message || 'Could not create the splice.')
@@ -316,22 +323,25 @@ function App() {
           <Palette size={17} aria-hidden="true"/>
           <input type="color" value={accent} onChange={changeAccent} aria-label="Choose accent color" title="Choose accent color"/>
         </div>
-        {!isLocalPage && <button className={`small-action audio-setup-button${audioStatus === 'ready' ? ' ready' : ''}`} type="button" aria-controls="audio-setup" aria-expanded={showAudioSetup} title={audioStatus === 'ready' ? 'One-time setup complete' : 'One-time setup'} disabled={audioStatus === 'checking' || busy === 'splice'} onClick={openAudioSetup}>
+        {!isLocalPage && <button className={`small-action audio-setup-button${audioStatus === 'ready' ? ' ready' : ''}`} type="button" aria-controls={showAudioSetup ? 'audio-setup' : undefined} aria-expanded={showAudioSetup} title={audioStatus === 'ready' ? 'One-time setup complete' : 'One-time setup'} disabled={busy === 'splice' || busy === 'check-audio'} onClick={toggleAudioSetup}>
           {audioStatus === 'ready' ? <Check size={15} aria-hidden="true"/> : <AudioLines size={15} aria-hidden="true"/>}
           <span>One-time setup</span>{audioStatus === 'ready' && <span className="setup-complete-label"> complete</span>}
         </button>}
+        {showAudioSetup && <section id="audio-setup" className="editor-panel audio-setup" aria-labelledby="audio-setup-title">
+          <button className="icon-button audio-setup-close" type="button" aria-label="Close audio setup" onClick={() => setShowAudioSetup(false)}><X size={15}/></button>
+          <h2 className="step-label" id="audio-setup-title">One-time setup</h2>
+          <p role="status">{audioStatus === 'ready' ? 'Audio ready. You can splice now.' : audioStatus === 'checking' ? 'Checking the Mac audio helper…' : audioStatus === 'tools' ? 'Open the launcher to repair the helper’s audio tools.' : waitingForHelper ? 'Waiting for the Mac helper to start…' : 'Start the Mac helper to splice audio.'}</p>
+          {audioStatus !== 'ready' && <>
+            <p>Unzip the download, open <strong>Start-Atropos.command</strong>, and leave its window open. Allow local network access if Chrome asks.</p>
+            <div className="audio-setup-actions">
+              <a className="primary-button" href="/Atropos-Mac.zip" download onClick={() => setWaitingForHelper(true)}><ArrowDownToLine size={15}/> Download for Mac</a>
+              <button className="small-action" type="button" disabled={audioStatus === 'checking'} onClick={openAudioSetup}>Check again</button>
+            </div>
+          </>}
+        </section>}
       </div>
     </aside>
     <main className="main-content">
-      {showAudioSetup && <section id="audio-setup" className="editor-panel audio-setup">
-        <button className="icon-button audio-setup-close" type="button" aria-label="Close audio setup" onClick={() => setShowAudioSetup(false)}><X size={15}/></button>
-        <h2 className="step-label">Audio setup</h2>
-        <p role="status">{audioStatus === 'ready' ? 'Audio ready. You can splice now.' : audioStatus === 'checking' ? 'Checking the Mac audio helper…' : audioStatus === 'tools' ? 'The helper is running. Open the downloaded launcher to repair its audio tools.' : 'Unzip the download, open Start-Atropos.command, and leave its window open. Allow local network access if Chrome asks.'}</p>
-        {(audioStatus === 'tools' || audioStatus === 'unreachable') && <div className="audio-setup-actions">
-          <a className="primary-button" href="/Atropos-Mac.zip" download onClick={() => setWaitingForHelper(true)}><ArrowDownToLine size={15}/> Download for Mac</a>
-          <button className="small-action" type="button" onClick={openAudioSetup}>Check again</button>
-        </div>}
-      </section>}
       {tab === 'splicer' ? <section className="page-wrap">
         <div className="page-heading"><h1>Splicer</h1></div>
         <section className="editor-panel">
@@ -359,7 +369,7 @@ function App() {
                 <button className="small-action" type="button" disabled={Boolean(busy)} onClick={() => markTime(setStart)}>Mark start</button>
                 <button className="small-action" type="button" disabled={Boolean(busy)} onClick={() => markTime(setEnd)}>Mark end</button>
               </div>}
-              <button className="primary-button full create-button" disabled={Boolean(busy) || audioStatus === 'checking'}>{busy === 'splice' ? <><LoaderCircle className="spin" size={16}/> Making your MP3…</> : <><Scissors size={16}/> Save MP3</>}</button>
+              <button className="primary-button full create-button" disabled={Boolean(busy) || (!selected.audioUrl && audioStatus === 'checking')}>{busy === 'check-audio' ? <><LoaderCircle className="spin" size={16}/> Checking audio…</> : busy === 'splice' ? <><LoaderCircle className="spin" size={16}/> Making your MP3…</> : <><Scissors size={16}/> Splice</>}</button>
             </form>
           </>}
         </section>

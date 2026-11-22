@@ -7,11 +7,14 @@
 .saved-source-picker{display:grid;gap:7px;margin:0 0 18px;padding:11px;border:1px solid #2b3128;background:#141712;border-radius:7px}.picker-label{font-size:8px;letter-spacing:1.1px;color:#838b7a;font-weight:700;margin:0 0 2px}.saved-source-option{display:flex;align-items:center;gap:9px;width:100%;padding:7px;border:1px solid transparent;border-radius:6px;background:#1b2019;color:#dfe3d9;text-align:left}.saved-source-option:hover{border-color:#48553a;background:#22291d}.saved-source-option .source-icon{width:29px;height:29px;flex:0 0 29px}.saved-source-option span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px}.saved-source-option b{font-size:9px;font-weight:500;color:#b8ce90;white-space:nowrap}.small-action{display:flex;align-items:center;gap:4px;padding:6px 8px;border:1px solid #394131;border-radius:5px;background:#20251d;color:#bdd397;font-size:9px;white-space:nowrap}.small-action:hover{border-color:var(--accent);color:var(--accent)}
 .source-player{display:block;width:100%;height:35px;margin-top:13px}
 .mark-times{display:flex;gap:8px;margin-top:10px}
-.audio-setup{position:relative;max-width:584px;margin:24px auto 0;width:calc(100% - 32px)}
+.sidebar:has(.audio-setup){z-index:20}
+.audio-setup{position:absolute;left:0;bottom:calc(100% + 10px);width:min(320px,calc(100vw - 24px));max-height:calc(100dvh - 112px);overflow:auto;box-shadow:0 12px 32px #000a}
 .audio-setup p{margin:0 0 14px;color:#a8aaa4;font-size:12px;line-height:1.55}
+.audio-setup p:last-child{margin-bottom:0}
 .audio-setup-close{position:absolute;top:12px;right:12px}
 .audio-setup-actions,.sidebar-footer{display:flex;align-items:center;gap:8px}
-.sidebar-footer{margin:auto 0 0 6px}
+.audio-setup-actions{flex-wrap:wrap}
+.sidebar-footer{position:relative;margin:auto 0 0 6px}
 .audio-setup-button{white-space:nowrap;min-height:34px}
 .audio-setup-button.ready{color:var(--accent)}
 .setup-complete-label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
