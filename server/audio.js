@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { createReadStream } from 'node:fs'
-import { mkdtemp, readdir, rm, stat } from 'node:fs/promises'
+import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
@@ -107,13 +107,14 @@ function readJson(req) {
 }
 
 async function extractMp3(video, range, directory, signal) {
+  const durationFilter = range ? ` & duration >= ${range.end}` : ''
   const result = await run('yt-dlp', [
     '--ignore-config', '--no-plugin-dirs', '--no-cache-dir', '--no-playlist', '--no-progress',
     '--no-js-runtimes', '--js-runtimes', `node:${process.execPath}`,
     '--socket-timeout', '15', '--retries', '1', '--extractor-retries', '1', '--fragment-retries', '1',
-    '--match-filter', `!is_live & duration <= ${maxDuration}`, '--max-filesize', String(maxBytes),
-    '--format', 'bestaudio',
-    ...(!range ? ['--extract-audio', '--audio-format', 'mp3', '--audio-quality', '192K'] : []),
+    '--match-filter', `!is_live & duration <= ${maxDuration}${durationFilter}`, '--max-filesize', String(maxBytes),
+    ...(range ? ['--download-sections', `*${range.start}-${range.end}`] : []),
+    '--format', 'bestaudio', '--extract-audio', '--audio-format', 'mp3', '--audio-quality', '192K',
     '--output', 'source.%(ext)s', '--', video.url,
   ], { cwd: directory, signal })
 
@@ -122,38 +123,25 @@ async function extractMp3(video, range, directory, signal) {
       throw new AudioError(502, 'CONVERSION_FAILED', 'FFmpeg could not convert the source audio to MP3.')
     }
     if (/connection|network|timed? out|name resolution|resolve host|certificate|HTTP Error (?:429|5\d\d)/i.test(result.diagnostics)) {
-      throw new AudioError(502, 'YOUTUBE_NETWORK_ERROR', 'The server could not download audio from YouTube. Try again later.')
+      throw new AudioError(502, 'YOUTUBE_NETWORK_ERROR', 'Your computer could not download audio from YouTube. Try again later.')
     }
     throw new AudioError(422, 'EXTRACTION_FAILED', 'YouTube audio could not be extracted. Check that the video is public and available.')
   }
 
-  let path = join(directory, 'source.mp3')
-  if (range) {
-    const files = await readdir(directory)
-    const sourceFile = files.find((file) => /^source\.[a-z\d]+$/i.test(file))
-    if (!sourceFile) throw new AudioError(422, 'NO_AUDIO', 'Choose a completed video with audio that is at most 60 minutes long and under 150 MiB.')
-    const source = join(directory, sourceFile)
-    const probe = await run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', source], { signal })
-    const duration = Number.parseFloat(probe.output)
-    if (probe.code !== 0 || !Number.isFinite(duration) || duration <= 0) {
-      throw new AudioError(422, 'INVALID_AUDIO', 'The source audio length could not be determined.')
-    }
-    if (range.start >= duration || range.end > duration + 0.05) {
-      throw new AudioError(422, 'RANGE_OUTSIDE_AUDIO', `Choose a timestamp range within the source audio (${Math.round(duration * 10) / 10} seconds).`)
-    }
-    path = join(directory, 'clip.mp3')
-    const conversion = await run('ffmpeg', [
-      '-nostdin', '-v', 'error', '-ss', String(range.start), '-i', source,
-      '-t', String(range.end - range.start), '-map', '0:a:0', '-c:a', 'libmp3lame', '-b:a', '192k', path,
-    ], { signal })
-    if (conversion.code !== 0) throw new AudioError(502, 'CONVERSION_FAILED', 'FFmpeg could not convert the selected audio to MP3.')
-  }
+  const path = join(directory, 'source.mp3')
   const file = await stat(path).catch((error) => {
     if (error.code !== 'ENOENT') throw error
     return null
   })
   if (!file?.size) {
-    throw new AudioError(422, 'NO_AUDIO', 'No MP3 was produced. Choose a completed video with audio that is at most 60 minutes long and under 150 MiB.')
+    throw new AudioError(422, 'NO_AUDIO', 'No MP3 was produced. Check that your timestamps are within a completed video with audio, at most 60 minutes long and under 150 MiB.')
+  }
+  if (range) {
+    const probe = await run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', path], { signal })
+    const duration = Number.parseFloat(probe.output)
+    if (probe.code !== 0 || !Number.isFinite(duration) || Math.abs(duration - (range.end - range.start)) > 0.5) {
+      throw new AudioError(422, 'INVALID_CLIP', 'YouTube did not return the selected audio range. Check the timestamps and try again.')
+    }
   }
   return { path, size: file.size }
 }

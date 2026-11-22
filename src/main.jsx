@@ -14,6 +14,9 @@ import './style.css'
 const convexUrl = import.meta.env.VITE_CONVEX_URL
 const client = convexUrl ? new ConvexReactClient(convexUrl, { expectAuth: true }) : null
 const api = anyApi
+const isLocalPage = ['localhost', '127.0.0.1'].includes(window.location.hostname)
+
+class LocalAudioSetupError extends Error {}
 
 const defaultAccent = '#c6f46a'
 const accentStorageKey = 'aria.accentColor'
@@ -81,7 +84,6 @@ async function uploadBlob(blob, generateUrl) {
 async function extractClip(url, start, end) {
   const { data } = await authClient.convex.token({ fetchOptions: { throw: false } })
   if (!data?.token) throw new Error('Sign in again to create a splice.')
-  const isLocalPage = ['localhost', '127.0.0.1'].includes(window.location.hostname)
   const endpoint = `${isLocalPage ? '' : localAudioOrigin}/api/audio/extract`
   let response
   try {
@@ -92,12 +94,12 @@ async function extractClip(url, start, end) {
       body: JSON.stringify({ url, start, end }),
     })
   } catch {
-    throw new Error(isLocalPage
-      ? 'Could not reach local audio processing. Restart Atropos and try again.'
-      : 'Start the audio helper with npm run audio, then allow local network access in your browser.')
+    if (isLocalPage) throw new Error('Could not reach local audio processing. Restart Atropos and try again.')
+    throw new LocalAudioSetupError('Open the Mac audio helper and allow local network access in Chrome.')
   }
   if (!response.ok || !response.headers.get('Content-Type')?.startsWith('audio/mpeg')) {
     const result = await response.json().catch(() => null)
+    if (!isLocalPage && result?.code === 'MISSING_DEPENDENCIES') throw new LocalAudioSetupError(result.error)
     if (response.status === 404 && !result?.error) {
       throw new Error('The local audio route was not found. Restart Atropos and try again.')
     }
@@ -160,6 +162,7 @@ function App() {
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [showAudioSetup, setShowAudioSetup] = useState(false)
   const selected = sources.find((source) => source._id === selectedId)
   const totalSplices = sources.reduce((sum, source) => sum + source.splices.length, 0)
   const filteredSources = useMemo(() => sources.filter((source) => `${source.title} ${source.videoId}`.toLowerCase().includes(query.toLowerCase())), [sources, query])
@@ -180,7 +183,10 @@ function App() {
       const audioStorageId = await uploadBlob(audio, uploadUrl)
       await addSplice({ sourceId: selected._id, title: spliceTitle.trim(), start: a, end: b, audioStorageId })
       setSpliceTitle(''); setNotice('MP3 splice created and saved to your library.')
-    } catch (e) { setError(e.message || 'Could not create the splice.') }
+    } catch (e) {
+      if (e instanceof LocalAudioSetupError) setShowAudioSetup(true)
+      setError(e.message || 'Could not create the splice.')
+    }
     finally { setBusy('') }
   }
 
@@ -261,7 +267,12 @@ function App() {
     </aside>
     <main className="main-content">
       {tab === 'splicer' ? <section className="page-wrap">
-        <div className="page-heading"><h1>Splicer</h1></div>
+        <div className="page-heading"><h1>Splicer</h1>{!isLocalPage && <button className="small-action" type="button" aria-expanded={showAudioSetup} onClick={() => setShowAudioSetup(!showAudioSetup)}>Mac audio setup</button>}</div>
+        {showAudioSetup && <section className="editor-panel audio-setup">
+          <h2 className="step-label">Set up audio on your Mac</h2>
+          <p>Unzip the download, open <strong>Start-Atropos.command</strong>, and leave its window open. Then splice here in Chrome.</p>
+          <a className="primary-button" href="/Atropos-Mac.zip" download><ArrowDownToLine size={15}/> Download for Mac</a>
+        </section>}
         <section className="editor-panel">
           <h2 className="step-label">Video source</h2>
           {!selected ? <>
