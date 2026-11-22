@@ -21,12 +21,7 @@ export function AuthScreen({ loading, denied }) {
       const result = creating
         ? await authClient.signUp.email({ ...credentials, name: address.split('@')[0] })
         : await authClient.signIn.email(credentials)
-      if (result.error) {
-        if (result.error.code === 'EMAIL_NOT_VERIFIED') setMode('verify')
-        else setError(result.error.message || 'Could not authenticate. Try again.')
-      } else if (creating) {
-        setMode('verify')
-      }
+      if (result.error) setError(result.error.message || 'Could not authenticate. Try again.')
     } catch {
       setError('Could not reach the sign-in service. Try again.')
     } finally {
@@ -44,12 +39,8 @@ export function AuthScreen({ loading, denied }) {
       <div className="brand"><div className="brand-mark"><AudioLines size={19}/></div><span>Atropos</span></div>
       {loading ? <h1 role="status">Checking your session…</h1> : denied ? <>
         <h1>Access unavailable</h1>
-        <p>This workspace requires an approved, verified email address.</p>
+        <p>This workspace requires an approved email address.</p>
         <button className="primary-button full" onClick={() => authClient.signOut()}>Sign out</button>
-      </> : mode === 'verify' ? <>
-        <h1>Check your email</h1>
-        <p>Open the verification link sent to {email}. Then sign in.</p>
-        <button className="primary-button full" onClick={() => switchMode('signin')}>Back to sign in</button>
       </> : <>
         <h1>{creating ? 'Create account' : 'Sign in'}</h1>
         <form key={mode} onSubmit={submit}>

@@ -26,12 +26,10 @@ Set these environment variables on the **Convex deployment** before deploying th
 | --- | --- |
 | `SITE_URL` | Hosted frontend origin, `https://aria-plum-beta.vercel.app` for production |
 | `BETTER_AUTH_SECRET` | A persistent secret generated with `openssl rand -base64 32` |
-| `APPROVED_SIGNUP_EMAILS` | Comma-separated addresses, such as `owner@example.com,editor@example.com` |
-| `RESEND_API_KEY` | Resend API key used only for signup verification emails |
-| `AUTH_EMAIL_FROM` | Sender from a verified Resend domain, such as `Atropos <accounts@example.com>` |
+| `ADMIN_EMAILS` | Comma-separated addresses, such as `owner@example.com,editor@example.com` |
 
 For custom Convex hosts, set `VITE_CONVEX_SITE_URL` to the deployment's HTTP actions origin. The frontend derives it from `VITE_CONVEX_URL` for `*.convex.cloud` deployments.
 
-Users create an account with their approved address and a password, verify the email, then sign in. All approved accounts share the existing Library. Removing an address from the allowlist also removes its access to the library and audio API.
+Users on the allowlist can create an account with their email address and a password. All approved accounts share the existing Library. Removing an address from the allowlist removes its access to the library and audio API.
 
 Atropos stores YouTube links and splice MP3s in Convex. Deleting a source also deletes its splices and any previously uploaded source audio.
