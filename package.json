@@ -4,13 +4,16 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
+    "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0",
-    "start": "node server/index.js"
+    "preview": "vite preview",
+    "start": "vite",
+    "audio": "node --env-file=.env.production server/index.js"
   },
   "dependencies": {
+    "@convex-dev/better-auth": "0.12.7",
     "@vitejs/plugin-react": "^5.0.0",
+    "better-auth": "1.6.34",
     "convex": "^1.28.0",
     "lamejs": "^1.2.1",
     "lucide-react": "^0.468.0",

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { parseYouTubeUrl } from '../shared/youtube.js'
+import { localAudioOrigin } from '../shared/audio-origin.js'
 
 const maxJobs = 2
 const maxStartsPerMinute = 8
@@ -157,7 +158,36 @@ async function extractMp3(video, range, directory, signal) {
   return { path, size: file.size }
 }
 
-export function createAudioHandler({ frontendOrigin } = {}) {
+async function authorizeExtraction(req, convexUrl) {
+  const token = req.headers.authorization
+  if (typeof token !== 'string' || !/^Bearer [\w.-]+$/.test(token) || token.length > 8192) {
+    throw new AudioError(401, 'SIGN_IN_REQUIRED', 'Sign in to create a splice.')
+  }
+
+  let result
+  try {
+    const response = await fetch(new URL('/api/query', convexUrl), {
+      method: 'POST',
+      headers: { Authorization: token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: 'auth:canUseApp', args: [{}], format: 'convex_encoded_json' }),
+      signal: AbortSignal.timeout(5000),
+    })
+    if (response.status === 401 || response.status === 403) {
+      throw new AudioError(401, 'SIGN_IN_REQUIRED', 'Sign in again to create a splice.')
+    }
+    if (!response.ok) throw new Error('Authorization query failed.')
+    result = await response.json()
+    if (result.status !== 'success') throw new Error('Authorization query failed.')
+  } catch (error) {
+    if (error instanceof AudioError) throw error
+    throw new AudioError(503, 'AUTH_UNAVAILABLE', 'The audio service could not verify your sign-in. Try again later.')
+  }
+  if (result.value !== true) {
+    throw new AudioError(403, 'FORBIDDEN', 'An approved Atropos account is required.')
+  }
+}
+
+export function createAudioHandler({ convexUrl, webOrigin } = {}) {
   let activeJobs = 0
   let starts = []
   let dependencyCheck
@@ -181,15 +211,24 @@ export function createAudioHandler({ frontendOrigin } = {}) {
       return json(res, 404, { error: 'Endpoint not found.' })
     }
 
-    if (frontendOrigin) res.setHeader('Vary', 'Origin')
-    if (frontendOrigin && req.headers.origin) {
-      if (req.headers.origin !== frontendOrigin) return json(res, 403, { error: 'Origin is not allowed.' })
-      res.setHeader('Access-Control-Allow-Origin', frontendOrigin)
-      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Retry-After')
-    }
-    if (req.method === 'OPTIONS' && frontendOrigin) {
-      res.writeHead(204, { 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' })
-      return res.end()
+    if (webOrigin) {
+      const { host, origin } = req.headers
+      if (host !== new URL(localAudioOrigin).host || (origin && origin !== webOrigin)) {
+        return json(res, 403, { error: 'Only the configured Atropos site can use this audio helper.' })
+      }
+      res.setHeader('Vary', 'Origin')
+      if (origin === webOrigin) res.setHeader('Access-Control-Allow-Origin', webOrigin)
+      if (req.method === 'OPTIONS' && origin === webOrigin) {
+        if (req.headers['access-control-request-private-network'] === 'true') {
+          res.setHeader('Access-Control-Allow-Private-Network', 'true')
+        }
+        res.writeHead(204, {
+          'Access-Control-Allow-Methods': route === '/api/audio/health' ? 'GET' : 'POST',
+          'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+          'Cache-Control': 'no-store',
+        })
+        return res.end()
+      }
     }
 
     let directory
@@ -204,6 +243,7 @@ export function createAudioHandler({ frontendOrigin } = {}) {
         res.setHeader('Allow', route === '/api/audio/health' ? 'GET' : 'POST')
         throw new AudioError(405, 'METHOD_NOT_ALLOWED', 'This endpoint does not accept that method.')
       }
+      await authorizeExtraction(req, convexUrl)
       if (req.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') {
         throw new AudioError(415, 'INVALID_CONTENT_TYPE', 'Send the YouTube URL as JSON.')
       }
@@ -220,7 +260,7 @@ export function createAudioHandler({ frontendOrigin } = {}) {
       if (res.destroyed) return
       if (!health.ok) {
         const missing = Object.keys(health.dependencies).filter((name) => !health.dependencies[name])
-        throw new AudioError(503, 'MISSING_DEPENDENCIES', `Audio extraction is unavailable. Check these server dependencies: ${missing.join(', ')}.`)
+        throw new AudioError(503, 'MISSING_DEPENDENCIES', `Check these tools on your computer: ${missing.join(', ')}.`)
       }
 
       const now = Date.now()

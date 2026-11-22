@@ -1,17 +1,20 @@
 import React, { useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { ConvexProvider, ConvexReactClient, useMutation, useQuery } from 'convex/react'
+import { ConvexReactClient, useConvexAuth, useMutation, useQuery } from 'convex/react'
+import { ConvexBetterAuthProvider } from '@convex-dev/better-auth/react'
 import { anyApi } from 'convex/server'
 import { ArrowDownToLine, AudioLines, Check, Clock3, Library, LoaderCircle, Music2, Palette, Plus, Scissors, Search, Trash2, X } from 'lucide-react'
 import encoderUrl from 'lamejs/lame.min.js?url&no-inline'
 import { parseYouTubeUrl } from '../shared/youtube.js'
+import { localAudioOrigin } from '../shared/audio-origin.js'
+import { authClient } from './auth-client.js'
+import { AuthScreen } from './auth-screen.jsx'
 import './style.css'
 
 const convexUrl = import.meta.env.VITE_CONVEX_URL
-const client = convexUrl ? new ConvexReactClient(convexUrl) : null
+const client = convexUrl ? new ConvexReactClient(convexUrl, { expectAuth: true }) : null
 const api = anyApi
 
-const audioApi = (import.meta.env.VITE_AUDIO_API_URL || '').replace(/\/+$/, '')
 const defaultAccent = '#c6f46a'
 const accentStorageKey = 'aria.accentColor'
 let encoderPromise
@@ -76,18 +79,28 @@ async function uploadBlob(blob, generateUrl) {
 }
 
 async function extractClip(url, start, end) {
+  const { data } = await authClient.convex.token({ fetchOptions: { throw: false } })
+  if (!data?.token) throw new Error('Sign in again to create a splice.')
+  const isLocalPage = ['localhost', '127.0.0.1'].includes(window.location.hostname)
+  const endpoint = `${isLocalPage ? '' : localAudioOrigin}/api/audio/extract`
   let response
   try {
-    response = await fetch(`${audioApi}/api/audio/extract`, {
+    response = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      redirect: 'error',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.token}` },
       body: JSON.stringify({ url, start, end }),
     })
   } catch {
-    throw new Error('Could not reach the audio extraction service. Try again.')
+    throw new Error(isLocalPage
+      ? 'Could not reach local audio processing. Restart Atropos and try again.'
+      : 'Start the audio helper with npm run audio, then allow local network access in your browser.')
   }
   if (!response.ok || !response.headers.get('Content-Type')?.startsWith('audio/mpeg')) {
     const result = await response.json().catch(() => null)
+    if (response.status === 404 && !result?.error) {
+      throw new Error('The local audio route was not found. Restart Atropos and try again.')
+    }
     throw new Error(result?.error || 'The audio extraction service did not return an MP3.')
   }
   return response.blob()
@@ -231,12 +244,16 @@ function App() {
 
   return <div className="app-shell" style={{ '--accent': accent, '--accent-ink': accentTextColor(accent) }}>
     <aside className="sidebar">
-      <div className="brand"><div className="brand-mark"><AudioLines size={19} strokeWidth={2.2}/></div><span>aria</span><span className="brand-dot">.</span></div>
+      <div className="brand"><div className="brand-mark"><AudioLines size={19} strokeWidth={2.2}/></div><span>Atropos</span></div>
       <div className="side-caption">WORKSPACE</div>
       <nav className="nav-list">
         <button className={`nav-item ${tab === 'splicer' ? 'active' : ''}`} onClick={() => setTab('splicer')}><Scissors size={17}/><span>Splicer</span></button>
         <button className={`nav-item ${tab === 'library' ? 'active' : ''}`} onClick={() => setTab('library')}><Library size={17}/><span>Library</span><span className="nav-count">{totalSplices}</span></button>
       </nav>
+      <button className="small-action sign-out" type="button" onClick={async () => {
+        const { error } = await authClient.signOut()
+        if (error) setError('Could not sign out. Try again.')
+      }}>Sign out</button>
       <div className="accent-picker">
         <Palette size={17} aria-hidden="true"/>
         <input type="color" value={accent} onChange={changeAccent} aria-label="Choose accent color" title="Choose accent color"/>
@@ -266,7 +283,6 @@ function App() {
             <form className="splice-form" onSubmit={createSplice}>
               <label className="field-label" htmlFor="splice-name">Splice name</label><input id="splice-name" className="standard-input" value={spliceTitle} onChange={e => setSpliceTitle(e.target.value)} placeholder="e.g. Favorite verse"/>
               <div className="time-row"><div><label className="field-label" htmlFor="time-start">START AT</label><input id="time-start" className="time-input" value={start} onChange={e => setStart(e.target.value)} placeholder="00:00"/></div><div className="time-connector"/><div><label className="field-label" htmlFor="time-end">END AT</label><input id="time-end" className="time-input" value={end} onChange={e => setEnd(e.target.value)} placeholder="00:30"/></div><div className="duration-chip"><Clock3 size={13}/>{Number.isFinite(stamp(end) - stamp(start)) ? Math.max(0, stamp(end) - stamp(start)) : 0}s</div></div>
-              <div className="time-hint">Use <b>MM:SS</b> or <b>HH:MM:SS</b>. {selected.audioUrl ? 'Enter times or mark them during source playback.' : 'Enter the start and end times from the video.'}</div>
               {selected.audioUrl && <div className="mark-times">
                 <button className="small-action" type="button" disabled={Boolean(busy)} onClick={() => markTime(setStart)}>Mark start</button>
                 <button className="small-action" type="button" disabled={Boolean(busy)} onClick={() => markTime(setEnd)}>Mark end</button>
@@ -287,9 +303,17 @@ function App() {
 }
 
 
+function Workspace() {
+  const { isLoading, isAuthenticated } = useConvexAuth()
+  const allowed = useQuery(api.auth.canUseApp, isAuthenticated ? {} : 'skip')
+  if (isLoading || (isAuthenticated && allowed === undefined)) return <AuthScreen loading/>
+  if (!isAuthenticated || !allowed) return <AuthScreen denied={isAuthenticated}/>
+  return <App/>
+}
+
 function Root() {
-  if (!convexUrl) return <div className="setup-screen"><div className="setup-card"><div className="brand"><div className="brand-mark"><AudioLines size={19}/></div><span>aria</span><span className="brand-dot">.</span></div><h1>One quick setup.</h1><p>Connect Aria to a Convex deployment so your sources, splices, and MP3 files are saved in your library.</p><ol><li>Run <code>npm install</code> and <code>npx convex dev</code>.</li><li>Copy the deployment URL into <code>.env.local</code> as <code>VITE_CONVEX_URL</code>.</li><li>Restart <code>npm run dev</code>.</li></ol></div></div>
-  return <ConvexProvider client={client}><App/></ConvexProvider>
+  if (!convexUrl) return <div className="setup-screen"><div className="setup-card"><div className="brand"><div className="brand-mark"><AudioLines size={19}/></div><span>Atropos</span></div><h1>One quick setup.</h1><p>Connect Atropos to a Convex deployment so your sources, splices, and MP3 files are saved in your library.</p><ol><li>Run <code>npm install</code> and <code>npx convex dev</code>.</li><li>Copy the deployment URL into <code>.env.local</code> as <code>VITE_CONVEX_URL</code>.</li><li>Restart <code>npm run dev</code>.</li></ol></div></div>
+  return <ConvexBetterAuthProvider client={client} authClient={authClient}><Workspace/></ConvexBetterAuthProvider>
 }
 
 createRoot(document.getElementById('root')).render(<Root/>)

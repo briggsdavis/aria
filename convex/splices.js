@@ -1,9 +1,11 @@
 import { mutation, query } from './_generated/server'
 import { v } from 'convex/values'
+import { requireWorkspaceAccess } from './auth'
 
 export const list = query({
   args: {},
   handler: async (ctx) => {
+    await requireWorkspaceAccess(ctx)
     const sources = await ctx.db.query('sources').withIndex('by_created').order('desc').collect()
     return Promise.all(sources.map(async (source) => {
       const splices = await ctx.db.query('splices').withIndex('by_source', (q) => q.eq('sourceId', source._id)).collect()
@@ -18,7 +20,10 @@ export const list = query({
 
 export const generateUploadUrl = mutation({
   args: {},
-  handler: async (ctx) => ctx.storage.generateUploadUrl(),
+  handler: async (ctx) => {
+    await requireWorkspaceAccess(ctx)
+    return ctx.storage.generateUploadUrl()
+  },
 })
 
 export const addSource = mutation({
@@ -27,6 +32,7 @@ export const addSource = mutation({
     audioStorageId: v.optional(v.id('_storage')), audioFileName: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    await requireWorkspaceAccess(ctx)
     if (!args.audioStorageId) {
       const existing = await ctx.db.query('sources').withIndex('by_video', (q) => q.eq('videoId', args.videoId)).first()
       if (existing) return existing._id
@@ -37,12 +43,16 @@ export const addSource = mutation({
 
 export const addSplice = mutation({
   args: { sourceId: v.id('sources'), title: v.string(), start: v.number(), end: v.number(), audioStorageId: v.id('_storage') },
-  handler: async (ctx, args) => ctx.db.insert('splices', { ...args, createdAt: Date.now() }),
+  handler: async (ctx, args) => {
+    await requireWorkspaceAccess(ctx)
+    return ctx.db.insert('splices', { ...args, createdAt: Date.now() })
+  },
 })
 
 export const deleteSplice = mutation({
   args: { id: v.id('splices') },
   handler: async (ctx, { id }) => {
+    await requireWorkspaceAccess(ctx)
     const splice = await ctx.db.get(id)
     if (!splice) return
     await ctx.storage.delete(splice.audioStorageId)
@@ -53,6 +63,7 @@ export const deleteSplice = mutation({
 export const deleteSource = mutation({
   args: { id: v.id('sources') },
   handler: async (ctx, { id }) => {
+    await requireWorkspaceAccess(ctx)
     const source = await ctx.db.get(id)
     if (!source) return
     const splices = await ctx.db.query('splices').withIndex('by_source', (q) => q.eq('sourceId', id)).collect()
