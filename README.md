@@ -4,9 +4,9 @@ Paste a YouTube link and choose start and end timestamps. Atropos runs `yt-dlp` 
 
 ## Use the Vercel site with local audio processing
 
-1. Open [Atropos on Vercel](https://aria-plum-beta.vercel.app/) in Chrome. Choose **Mac audio setup** and **Download for Mac**.
+1. Open [Atropos on Vercel](https://aria-plum-beta.vercel.app/) in Chrome. Choose **One-time setup** in the bottom left. If the helper is unavailable, choose **Download for Mac**.
 2. Unzip the download and open `Start-Atropos.command` from the extracted folder. The launcher needs Node.js 22.12 or newer. When Homebrew is available, it installs or repairs the local audio tools on demand.
-3. Leave that Terminal window open and save a splice in Atropos. Allow local network access when Chrome prompts.
+3. Allow local network access when Chrome prompts. Atropos checks the helper and shows a check mark when audio is ready. Leave the helper window open while saving splices.
 
 From a source checkout, `npm run audio` starts the same helper. On other platforms, install `yt-dlp` and FFmpeg (including `ffprobe`) first. Check [local audio health](http://127.0.0.1:8787/api/audio/health) if the helper has trouble finding the tools.
 

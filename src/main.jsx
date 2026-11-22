@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ConvexReactClient, useConvexAuth, useMutation, useQuery } from 'convex/react'
 import { ConvexBetterAuthProvider } from '@convex-dev/better-auth/react'
@@ -79,6 +79,20 @@ async function uploadBlob(blob, generateUrl) {
   if (!response.ok) throw new Error('File upload failed. Try again.')
   const { storageId } = await response.json()
   return storageId
+}
+
+async function checkLocalAudio() {
+  try {
+    const response = await fetch(`${localAudioOrigin}/api/audio/health`, {
+      cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(6500),
+    })
+    const health = await response.json()
+    if (response.ok && health?.ok === true) return 'ready'
+    if (response.status === 503 && health?.ok === false) return 'tools'
+  } catch {
+    // The helper may still be starting or waiting for browser permission.
+  }
+  return 'unreachable'
 }
 
 async function extractClip(url, start, end) {
@@ -163,9 +177,34 @@ function App() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [showAudioSetup, setShowAudioSetup] = useState(false)
+  const [audioStatus, setAudioStatus] = useState('unchecked')
+  const [waitingForHelper, setWaitingForHelper] = useState(false)
   const selected = sources.find((source) => source._id === selectedId)
   const totalSplices = sources.reduce((sum, source) => sum + source.splices.length, 0)
   const filteredSources = useMemo(() => sources.filter((source) => `${source.title} ${source.videoId}`.toLowerCase().includes(query.toLowerCase())), [sources, query])
+
+  useEffect(() => {
+    if (!waitingForHelper) return
+    let stopped = false
+    let timer
+    const deadline = Date.now() + 120_000
+    async function retry() {
+      const status = await checkLocalAudio()
+      if (stopped) return
+      setAudioStatus(status)
+      if (status === 'ready' || Date.now() >= deadline) setWaitingForHelper(false)
+      else timer = setTimeout(retry, 3000)
+    }
+    timer = setTimeout(retry, 3000)
+    return () => { stopped = true; clearTimeout(timer) }
+  }, [waitingForHelper])
+
+  async function openAudioSetup() {
+    setShowAudioSetup(true)
+    setWaitingForHelper(false)
+    setAudioStatus('checking')
+    setAudioStatus(await checkLocalAudio())
+  }
 
   async function createSplice(event) {
     event.preventDefault(); setError(''); setNotice('')
@@ -177,6 +216,15 @@ function App() {
     if (a < 0 || b <= a) return setError('End time must be after start time.')
     setBusy('splice')
     try {
+      if (!isLocalPage && !selected.audioUrl && audioStatus !== 'ready') {
+        setWaitingForHelper(false)
+        const status = await checkLocalAudio()
+        setAudioStatus(status)
+        if (status !== 'ready') {
+          setShowAudioSetup(true)
+          return
+        }
+      }
       const audio = selected.audioUrl
         ? await makeMp3(await audioForSource(selected), a, b)
         : await extractClip(selected.videoUrl, a, b)
@@ -184,7 +232,10 @@ function App() {
       await addSplice({ sourceId: selected._id, title: spliceTitle.trim(), start: a, end: b, audioStorageId })
       setSpliceTitle(''); setNotice('MP3 splice created and saved to your library.')
     } catch (e) {
-      if (e instanceof LocalAudioSetupError) setShowAudioSetup(true)
+      if (e instanceof LocalAudioSetupError) {
+        setAudioStatus(await checkLocalAudio())
+        setShowAudioSetup(true)
+      }
       setError(e.message || 'Could not create the splice.')
     }
     finally { setBusy('') }
@@ -260,19 +311,29 @@ function App() {
         const { error } = await authClient.signOut()
         if (error) setError('Could not sign out. Try again.')
       }}>Sign out</button>
-      <div className="accent-picker">
-        <Palette size={17} aria-hidden="true"/>
-        <input type="color" value={accent} onChange={changeAccent} aria-label="Choose accent color" title="Choose accent color"/>
+      <div className="sidebar-footer">
+        <div className="accent-picker">
+          <Palette size={17} aria-hidden="true"/>
+          <input type="color" value={accent} onChange={changeAccent} aria-label="Choose accent color" title="Choose accent color"/>
+        </div>
+        {!isLocalPage && <button className={`small-action audio-setup-button${audioStatus === 'ready' ? ' ready' : ''}`} type="button" aria-controls="audio-setup" aria-expanded={showAudioSetup} title={audioStatus === 'ready' ? 'One-time setup complete' : 'One-time setup'} disabled={audioStatus === 'checking' || busy === 'splice'} onClick={openAudioSetup}>
+          {audioStatus === 'ready' ? <Check size={15} aria-hidden="true"/> : <AudioLines size={15} aria-hidden="true"/>}
+          <span>One-time setup</span>{audioStatus === 'ready' && <span className="setup-complete-label"> complete</span>}
+        </button>}
       </div>
     </aside>
     <main className="main-content">
+      {showAudioSetup && <section id="audio-setup" className="editor-panel audio-setup">
+        <button className="icon-button audio-setup-close" type="button" aria-label="Close audio setup" onClick={() => setShowAudioSetup(false)}><X size={15}/></button>
+        <h2 className="step-label">Audio setup</h2>
+        <p role="status">{audioStatus === 'ready' ? 'Audio ready. You can splice now.' : audioStatus === 'checking' ? 'Checking the Mac audio helper…' : audioStatus === 'tools' ? 'The helper is running. Open the downloaded launcher to repair its audio tools.' : 'Unzip the download, open Start-Atropos.command, and leave its window open. Allow local network access if Chrome asks.'}</p>
+        {(audioStatus === 'tools' || audioStatus === 'unreachable') && <div className="audio-setup-actions">
+          <a className="primary-button" href="/Atropos-Mac.zip" download onClick={() => setWaitingForHelper(true)}><ArrowDownToLine size={15}/> Download for Mac</a>
+          <button className="small-action" type="button" onClick={openAudioSetup}>Check again</button>
+        </div>}
+      </section>}
       {tab === 'splicer' ? <section className="page-wrap">
-        <div className="page-heading"><h1>Splicer</h1>{!isLocalPage && <button className="small-action" type="button" aria-expanded={showAudioSetup} onClick={() => setShowAudioSetup(!showAudioSetup)}>Mac audio setup</button>}</div>
-        {showAudioSetup && <section className="editor-panel audio-setup">
-          <h2 className="step-label">Set up audio on your Mac</h2>
-          <p>Unzip the download, open <strong>Start-Atropos.command</strong>, and leave its window open. Then splice here in Chrome.</p>
-          <a className="primary-button" href="/Atropos-Mac.zip" download><ArrowDownToLine size={15}/> Download for Mac</a>
-        </section>}
+        <div className="page-heading"><h1>Splicer</h1></div>
         <section className="editor-panel">
           <h2 className="step-label">Video source</h2>
           {!selected ? <>
@@ -298,7 +359,7 @@ function App() {
                 <button className="small-action" type="button" disabled={Boolean(busy)} onClick={() => markTime(setStart)}>Mark start</button>
                 <button className="small-action" type="button" disabled={Boolean(busy)} onClick={() => markTime(setEnd)}>Mark end</button>
               </div>}
-              <button className="primary-button full create-button" disabled={Boolean(busy)}>{busy === 'splice' ? <><LoaderCircle className="spin" size={16}/> Making your MP3…</> : <><Scissors size={16}/> Save MP3</>}</button>
+              <button className="primary-button full create-button" disabled={Boolean(busy) || audioStatus === 'checking'}>{busy === 'splice' ? <><LoaderCircle className="spin" size={16}/> Making your MP3…</> : <><Scissors size={16}/> Save MP3</>}</button>
             </form>
           </>}
         </section>
